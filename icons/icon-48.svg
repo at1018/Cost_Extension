@@ -1,0 +1,10 @@
+<svg width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="24" cy="24" r="22" fill="#1f6feb" stroke="#0969da" stroke-width="2"/>
+  
+  <!-- Dollar sign with shield concept -->
+  <path d="M 24 10 L 16 14 L 16 24 Q 16 32 24 36 Q 32 32 32 24 L 32 14 Z" fill="#ffffff" opacity="0.8"/>
+  
+  <!-- Dollar symbol -->
+  <text x="24" y="32" font-size="28" font-weight="bold" fill="#1f6feb" text-anchor="middle" font-family="Arial, sans-serif">$</text>
+</svg>
