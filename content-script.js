@@ -85,10 +85,12 @@ const COSTGUARD_CONFIG = {
   }
 };
 
-// Track which elements already have badges to avoid duplication
-let cachedBadgeElements = new WeakMap();
 let costGuardPanel = null;
+let costGuardPanelAutoHideTimer = null;
+let isCostGuardPanelMinimized = false;
 let previousSelectedResourceInfo = null;
+let lastDisplayedResourceId = null; // tracks last resource shown in panel
+let isScanning = false; // prevents overlapping scans
 let lastScanTime = 0;
 let pricingData = null;
 let isInitialized = false;
@@ -256,9 +258,17 @@ function findSelectedResource(detectedResources) {
   const selectedSelectors = [
     'option[selected]',
     '[aria-selected="true"]',
+    '[aria-current="true"]',
     '[aria-pressed="true"]',
     '[data-selected="true"]',
     '[data-active="true"]',
+    '[data-testid="selected"]',
+    'li[aria-selected="true"]',
+    '[role="option"][aria-selected="true"]',
+    '[role="option"][data-selected="true"]',
+    '[role="option"].selected',
+    '[role="option"].is-selected',
+    '[role="option"].active',
     '.selected',
     '.is-selected',
     '.active'
@@ -275,6 +285,35 @@ function findSelectedResource(detectedResources) {
       return matchText && text.includes(matchText);
     });
     if (found) return found;
+  }
+
+  const activeDescendantHost = document.querySelector('[aria-activedescendant]');
+  if (activeDescendantHost) {
+    const activeId = activeDescendantHost.getAttribute('aria-activedescendant');
+    if (activeId) {
+      const activeNode = document.getElementById(activeId);
+      if (activeNode) {
+        const activeText = activeNode.textContent || '';
+        const found = detectedResources.find((resource) => {
+          const matchText = getResourceMatchText(resource);
+          return matchText && activeText.includes(matchText);
+        });
+        if (found) return found;
+      }
+    }
+  }
+
+  const expandedControl = document.querySelector('[aria-expanded="true"]');
+  if (expandedControl) {
+    const activeOption = expandedControl.querySelector('[role="option"][aria-selected="true"], [role="option"].selected, [role="option"].is-selected, [data-selected="true"]');
+    if (activeOption) {
+      const activeText = activeOption.textContent || '';
+      const found = detectedResources.find((resource) => {
+        const matchText = getResourceMatchText(resource);
+        return matchText && activeText.includes(matchText);
+      });
+      if (found) return found;
+    }
   }
 
   const activeElement = document.activeElement;
@@ -304,7 +343,12 @@ function findSelectedResource(detectedResources) {
     if (foundByOptionText) return foundByOptionText;
   }
 
-  return detectedResources[0];
+  if (detectedResources.length === 1) {
+    console.log('[CostGuard] Single resource on page, falling back to it');
+    return detectedResources[0];
+  }
+
+  return null;
 }
 
 function createCostGuardPanel() {
@@ -342,7 +386,7 @@ function createCostGuardPanel() {
       <span style="font-weight:700; font-size:14px;">CostGuard</span>
       <span style="font-size:12px; opacity:0.65;">Live</span>
     </div>
-    <div class="costguard-panel-content" style="font-size:13px; line-height:1.5;">
+    <div class="costguard-panel-full" style="font-size:13px; line-height:1.5;">
       <div style="margin-bottom:8px;"><span style="opacity:0.65;">Service:</span> <strong data-costguard="service">N/A</strong></div>
       <div style="margin-bottom:8px;"><span style="opacity:0.65;">Resource:</span> <strong data-costguard="resource">N/A</strong></div>
       <div style="margin-bottom:12px;"><span style="opacity:0.65;">Region:</span> <strong data-costguard="region">Unknown Region</strong></div>
@@ -351,13 +395,84 @@ function createCostGuardPanel() {
       <div style="margin-bottom:12px;"><span style="opacity:0.65;">Monthly Cost:</span> <strong data-costguard="monthly">$0.00</strong></div>
       <div data-costguard="comparison" style="display:none; padding:10px 12px; border-radius:12px; background: #f1f5f9; color: #102a43; font-size:12px;"></div>
     </div>
+    <div class="costguard-panel-minimized" style="display:none; width:100%; height:100%; align-items:center; justify-content:center; font-size:22px;">
+      💰
+    </div>
   `;
 
   document.body.appendChild(panel);
   const header = panel.querySelector('.costguard-panel-header');
+  const minimizedIcon = panel.querySelector('.costguard-panel-minimized');
   makePanelDraggable(panel, header);
+  // Also make the whole panel draggable (useful when minimized). makePanelDraggable is idempotent per handle.
+  makePanelDraggable(panel, panel);
+  minimizedIcon.addEventListener('click', toggleCostGuardPanel);
   costGuardPanel = panel;
   return panel;
+}
+
+function showCostGuardPanel() {
+  const panel = createCostGuardPanel();
+  const fullPanel = panel.querySelector('.costguard-panel-full');
+  const minimizedIcon = panel.querySelector('.costguard-panel-minimized');
+
+  panel.style.width = '260px';
+  panel.style.height = 'auto';
+  panel.style.padding = '16px';
+  panel.style.borderRadius = '18px';
+  panel.style.cursor = 'default';
+  panel.style.right = '20px';
+  panel.style.left = 'auto';
+  panel.style.top = '20px';
+
+  fullPanel.style.display = 'block';
+  minimizedIcon.style.display = 'none';
+  panel.style.display = 'block';
+  isCostGuardPanelMinimized = false;
+  startAutoHideTimer();
+}
+
+function minimizeCostGuardPanel() {
+  const panel = createCostGuardPanel();
+  const fullPanel = panel.querySelector('.costguard-panel-full');
+  const minimizedIcon = panel.querySelector('.costguard-panel-minimized');
+
+  panel.style.width = '48px';
+  panel.style.height = '48px';
+  panel.style.padding = '0';
+  panel.style.borderRadius = '50%';
+  panel.style.cursor = 'pointer';
+  panel.style.right = '20px';
+  panel.style.left = 'auto';
+  panel.style.top = '20px';
+
+  fullPanel.style.display = 'none';
+  minimizedIcon.style.display = 'flex';
+  minimizedIcon.style.cursor = 'pointer';
+  panel.style.display = 'flex';
+  isCostGuardPanelMinimized = true;
+}
+
+function toggleCostGuardPanel() {
+  if (!costGuardPanel) {
+    showCostGuardPanel();
+    return;
+  }
+
+  if (isCostGuardPanelMinimized) {
+    showCostGuardPanel();
+  } else {
+    minimizeCostGuardPanel();
+  }
+}
+
+function startAutoHideTimer() {
+  if (costGuardPanelAutoHideTimer) {
+    clearTimeout(costGuardPanelAutoHideTimer);
+  }
+  costGuardPanelAutoHideTimer = setTimeout(() => {
+    minimizeCostGuardPanel();
+  }, 8000);
 }
 
 function updateCostGuardPanel(resourceInfo) {
@@ -387,7 +502,7 @@ function updateCostGuardPanel(resourceInfo) {
     comparison.style.display = 'none';
   }
 
-  panel.style.display = 'block';
+  showCostGuardPanel();
   previousSelectedResourceInfo = resourceInfo;
 }
 
@@ -397,6 +512,8 @@ function hideCostGuardPanel() {
 }
 
 function makePanelDraggable(panel, handle) {
+  if (!handle || handle.dataset?.cgDragInit === 'true') return;
+  handle.dataset.cgDragInit = 'true';
   let isDragging = false;
   let startX = 0;
   let startY = 0;
@@ -464,90 +581,62 @@ function findResourcesInElement(element, pricingData) {
     false
   );
 
+  const seenByTextNode = new WeakMap();
   let currentNode;
   while ((currentNode = walker.nextNode())) {
     const text = currentNode.nodeValue;
     if (!text || text.trim().length === 0) continue;
 
-    // Search for AWS EC2 instances
+    const nodeResources = seenByTextNode.get(currentNode) || new Set();
+
+    const tryAddResource = (resourceId, matchText) => {
+      const key = resourceId.toLowerCase();
+      if (nodeResources.has(key)) {
+        console.log('[CostGuard] Deduplicated same node resource:', resourceId);
+        return;
+      }
+      const costInfo = lookupResourceCost(resourceId, pricingData);
+      if (!costInfo) return;
+      nodeResources.add(key);
+      seenByTextNode.set(currentNode, nodeResources);
+      detectedResources.push({
+        text_node: currentNode,
+        resource_id: resourceId,
+        cost_info: costInfo,
+        match_text: matchText
+      });
+    };
+
     for (const pattern of COSTGUARD_CONFIG.aws.ec2_patterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        const resourceId = match[1];
-        const costInfo = lookupResourceCost(resourceId, pricingData);
-        if (costInfo) {
-          detectedResources.push({
-            text_node: currentNode,
-            resource_id: resourceId,
-            cost_info: costInfo,
-            match_text: match[0]
-          });
-        }
+      for (const match of text.matchAll(pattern)) {
+        tryAddResource(match[1], match[0]);
       }
     }
 
-    // Search for AWS RDS instances
     for (const pattern of COSTGUARD_CONFIG.aws.rds_patterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        const resourceId = match[1];
-        const costInfo = lookupResourceCost(resourceId, pricingData);
-        if (costInfo) {
-          detectedResources.push({
-            text_node: currentNode,
-            resource_id: resourceId,
-            cost_info: costInfo,
-            match_text: match[0]
-          });
-        }
+      for (const match of text.matchAll(pattern)) {
+        tryAddResource(match[1], match[0]);
       }
     }
 
-    // Search for GCP Compute Engine instances
     for (const pattern of COSTGUARD_CONFIG.gcp.compute_engine_patterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        const resourceId = match[1];
-        const costInfo = lookupResourceCost(resourceId, pricingData);
-        if (costInfo) {
-          detectedResources.push({
-            text_node: currentNode,
-            resource_id: resourceId,
-            cost_info: costInfo,
-            match_text: match[0]
-          });
-        }
+      for (const match of text.matchAll(pattern)) {
+        tryAddResource(match[1], match[0]);
       }
     }
 
-    // Search for GCP Cloud SQL instances
     for (const pattern of COSTGUARD_CONFIG.gcp.cloud_sql_patterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        const resourceId = match[1];
-        const costInfo = lookupResourceCost(resourceId, pricingData);
-        if (costInfo) {
-          detectedResources.push({
-            text_node: currentNode,
-            resource_id: resourceId,
-            cost_info: costInfo,
-            match_text: match[0]
-          });
-        }
+      for (const match of text.matchAll(pattern)) {
+        tryAddResource(match[1], match[0]);
       }
     }
   }
 
-  // FIX: Duplicate detection
-  // Deduplicate detected resources by resource_id and keep only the first occurrence.
-  // This prevents duplicate badge injection when the same instance type appears multiple times.
   const uniqueResourcesMap = new Map();
   for (const detection of detectedResources) {
     const key = detection.resource_id.toLowerCase();
     if (!uniqueResourcesMap.has(key)) {
       uniqueResourcesMap.set(key, detection);
-    } else {
-      console.log('[CostGuard] Skipping duplicate resource:', detection.resource_id);
     }
   }
 
@@ -576,6 +665,12 @@ function injectCostBadges(detectedResources) {
     const existingBadge = parentElement.querySelector(
       `.costguard-badge[data-resource-id="${cost_info.resource_id}"]`
     );
+
+    console.log('[CostGuard] Badge State', cost_info.resource_id, {
+      badgeExists: !!existingBadge,
+      parentElement
+    });
+
     if (existingBadge) {
       console.log('[CostGuard] Badge already exists for:', cost_info.resource_id);
       existingBadge.textContent = `💰 ${formatCost(cost_info.hourly_cost)}`;
@@ -583,31 +678,12 @@ function injectCostBadges(detectedResources) {
       existingBadge.setAttribute('data-provider', cost_info.provider);
       existingBadge.setAttribute('data-type', cost_info.type);
       existingBadge.setAttribute('data-costguard', 'true');
-
-      let resourceSet = cachedBadgeElements.get(parentElement);
-      if (!resourceSet) {
-        resourceSet = new Set();
-        cachedBadgeElements.set(parentElement, resourceSet);
-      }
-      resourceSet.add(resourceKey);
-      continue;
-    }
-
-    const parentResourceSet = cachedBadgeElements.get(parentElement);
-    if (parentResourceSet?.has(resourceKey)) {
-      console.log('[CostGuard] Skipping duplicate resource in same parent:', cost_info.resource_id);
       continue;
     }
 
     try {
       const badge = createCostBadge(cost_info);
       parentElement.insertBefore(badge, text_node.nextSibling);
-      let resourceSet = cachedBadgeElements.get(parentElement);
-      if (!resourceSet) {
-        resourceSet = new Set();
-        cachedBadgeElements.set(parentElement, resourceSet);
-      }
-      resourceSet.add(resourceKey);
       badgeCount++;
 
       // Log resource detection for debugging
@@ -628,78 +704,86 @@ function injectCostBadges(detectedResources) {
 /**
  * Scan the entire page for cloud resource identifiers and inject badges
  */
-function scanAndInjectBadges(pricingData) {
-  cachedBadgeElements = new WeakMap();
-
-  // DEBUG: Log current URL and body text length before scanning
-    setTimeout(() => {
-    console.log(
-      '[CostGuard] Delayed Check:',
-      document.body.innerText.includes('t3.micro')
-    );
-  }, 10000);
-
-  console.log(
-    '[CostGuard] Current Body Length:',
-    document.body.innerText.length
-  );
-
-  console.log(
-    '[CostGuard] Has t3.micro:',
-    document.body.innerText.includes('t3.micro')
-  );
-  if (!pricingData) {
-    console.warn('[CostGuard] No pricing data available for scanning');
+function scanAndInjectBadges(pricingData, retryCount = 0) {
+  if (isScanning) {
+    console.log('[CostGuard] Scan already running, skipping');
     return 0;
   }
 
-  const now = Date.now();
-  if (now - lastScanTime < COSTGUARD_CONFIG.performance.scan_interval_ms) {
-    // Debounce scans to avoid excessive DOM traversal
-    return 0;
-  }
-  lastScanTime = now;
+  let scanResult = 0;
+  isScanning = true;
 
   try {
-    // DEBUG: Log current URL and body text length
-      console.log(
-    '[CostGuard] Current URL:',
-    window.location.href
-  );
+    const bodyText = document.body?.innerText || '';
+    const bodyLength = bodyText.length;
 
-  console.log(
-    '[CostGuard] Body text length:',
-    document.body.innerText.length
-  );
+    console.log('[CostGuard] scanAndInjectBadges triggered');
+    console.log('[CostGuard] Body text length:', bodyLength);
+    console.log('[CostGuard] Body contains t3.micro:', bodyText.includes('t3.micro'));
 
-  console.log(
-    '[CostGuard] First 500 chars:',
-    document.body.innerText.substring(0, 500)
-  );
-  console.log('[CostGuard] scanAndInjectBadges triggered');
+    if (!pricingData) {
+      console.warn('[CostGuard] No pricing data available for scanning');
+      return scanResult;
+    }
+
+    if (bodyLength < 50 && retryCount < 6) {
+      const delay = 500 + retryCount * 100;
+      console.log('[CostGuard] Body too small for reliable scan, retrying', {
+        bodyLength,
+        retryCount,
+        delay
+      });
+      setTimeout(() => {
+        scanAndInjectBadges(pricingData, retryCount + 1);
+      }, delay);
+      return scanResult;
+    }
+
+    const now = Date.now();
+    if (now - lastScanTime < COSTGUARD_CONFIG.performance.scan_interval_ms) {
+      console.log('[CostGuard] Scan skipped due to throttle', {
+        lastScanTime,
+        now,
+        interval: COSTGUARD_CONFIG.performance.scan_interval_ms
+      });
+      return scanResult;
+    }
+    lastScanTime = now;
+
+    console.log('[CostGuard] Current URL:', window.location.href);
+    console.log('[CostGuard] First 500 chars:', bodyText.substring(0, 500));
+
     const detectedResources = findResourcesInElement(document.body, pricingData);
-    console.log(
-    '[CostGuard] Detected Resources:',
-    detectedResources.length,
-    detectedResources
-    );
+    console.log('[CostGuard] Detected Resources:', detectedResources.length, detectedResources);
+
     const selectedResource = findSelectedResource(detectedResources);
     if (selectedResource) {
-      updateCostGuardPanel(selectedResource);
+      console.log('[CostGuard] Selected resource:', selectedResource.resource_id);
+      if (selectedResource.resource_id !== lastDisplayedResourceId) {
+        console.log('[CostGuard] New resource selection detected:', selectedResource.resource_id);
+        updateCostGuardPanel(selectedResource);
+        lastDisplayedResourceId = selectedResource.resource_id;
+      } else {
+        console.log('[CostGuard] Same selection, leaving panel state unchanged:', selectedResource.resource_id);
+      }
     } else {
+      console.log('[CostGuard] No selected resource found');
       hideCostGuardPanel();
+      lastDisplayedResourceId = null;
     }
 
     if (detectedResources.length > 0) {
       const badgeCount = injectCostBadges(detectedResources);
       console.log(`[CostGuard] Scanned page and injected ${badgeCount} cost badges`);
-      return badgeCount;
+      scanResult = badgeCount;
     }
   } catch (error) {
     console.error('[CostGuard] Error during page scan:', error);
+  } finally {
+    isScanning = false;
   }
 
-  return 0;
+  return scanResult;
 }
 
 // ============================================================================
