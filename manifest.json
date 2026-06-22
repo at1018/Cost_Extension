@@ -23,7 +23,9 @@
         "https://*.console.cloud.google.com/*"
       ],
       "js": ["content-script.js"],
-      "run_at": "document_end"
+      "run_at": "document_end",
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
   "action": {

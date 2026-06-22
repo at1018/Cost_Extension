@@ -13,6 +13,21 @@
 // GLOBAL STATE & CONFIGURATION
 // ============================================================================
 
+console.log(
+  '[CostGuard] Is Top Frame:',
+  window === window.top
+);
+
+console.log(
+  '[CostGuard] Frame URL:',
+  window.location.href
+);
+
+console.log(
+  '[CostGuard] Body Length:',
+  document.body?.innerText?.length
+);
+
 const COSTGUARD_CONFIG = {
   // AWS resource patterns
   aws: {
@@ -291,6 +306,107 @@ function findResourcesInElement(element, pricingData) {
     }
   }
 
+  // FIX: Duplicate detection
+  // Deduplicate detected resources by resource_id and keep only the first occurrence.
+  // This prevents duplicate badge injection when the same instance type appears multiple times.
+  const uniqueResourcesMap = new Map();
+  for (const detection of detectedResources) {
+    const key = detection.resource_id.toLowerCase();
+    if (!uniqueResourcesMap.has(key)) {
+      uniqueResourcesMap.set(key, detection);
+    }
+  }
+
+  const uniqueResources = Array.from(uniqueResourcesMap.values());
+  return uniqueResources;
+
+
+    //     console.log('[CostGuard] Resource ID:', resourceId);
+
+    //     const costInfo = lookupResourceCost(resourceId, pricingData);
+
+    //     console.log('[CostGuard] Cost Info:', costInfo);
+
+    //     if (costInfo) {
+    //       detectedResources.push({
+    //         text_node: currentNode,
+    //         resource_id: resourceId,
+    //         cost_info: costInfo,
+    //         match_text: match[0]
+    //       });
+    //     }
+    //   }
+    // }
+
+    // Search for AWS EC2 instances
+    for (const pattern of COSTGUARD_CONFIG.aws.ec2_patterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        const resourceId = match[1];
+        const costInfo = lookupResourceCost(resourceId, pricingData);
+        if (costInfo) {
+          detectedResources.push({
+            text_node: currentNode,
+            resource_id: resourceId,
+            cost_info: costInfo,
+            match_text: match[0]
+          });
+        }
+      }
+    }
+
+    // Search for AWS RDS instances
+    for (const pattern of COSTGUARD_CONFIG.aws.rds_patterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        const resourceId = match[1];
+        const costInfo = lookupResourceCost(resourceId, pricingData);
+        if (costInfo) {
+          detectedResources.push({
+            text_node: currentNode,
+            resource_id: resourceId,
+            cost_info: costInfo,
+            match_text: match[0]
+          });
+        }
+      }
+    }
+
+    // Search for GCP Compute Engine instances
+    for (const pattern of COSTGUARD_CONFIG.gcp.compute_engine_patterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        const resourceId = match[1];
+        const costInfo = lookupResourceCost(resourceId, pricingData);
+        if (costInfo) {
+          detectedResources.push({
+            text_node: currentNode,
+            resource_id: resourceId,
+            cost_info: costInfo,
+            match_text: match[0]
+          });
+        }
+      }
+    }
+
+    // Search for GCP Cloud SQL instances
+    for (const pattern of COSTGUARD_CONFIG.gcp.cloud_sql_patterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        const resourceId = match[1];
+        const costInfo = lookupResourceCost(resourceId, pricingData);
+        if (costInfo) {
+          detectedResources.push({
+            text_node: currentNode,
+            resource_id: resourceId,
+            cost_info: costInfo,
+            match_text: match[0]
+          });
+        }
+      }
+    }
+  }
+
   return detectedResources;
 }
 
@@ -309,8 +425,15 @@ function injectCostBadges(detectedResources) {
 
     const { text_node, cost_info } = detection;
     const parentElement = text_node.parentElement;
+    if (!parentElement) continue;
 
-    // Avoid duplicate badges
+    // FIX: AWS React re-render protection
+    // If a badge already exists in this parent element, skip injection.
+    if (parentElement.querySelector('.costguard-badge')) {
+      continue;
+    }
+
+    // Avoid duplicate badges using the parent element cache
     if (cachedBadgeElements.has(parentElement)) {
       continue;
     }
@@ -319,7 +442,9 @@ function injectCostBadges(detectedResources) {
       // Create and inject badge
       const badge = createCostBadge(cost_info);
       parentElement.insertBefore(badge, text_node.nextSibling);
-      cachedBadgeElements.add(badge);
+      // FIX: Badge cache bug
+      // Store the parent element in the cache, since that's what we check above.
+      cachedBadgeElements.add(parentElement);
       badgeCount++;
 
       // Log resource detection for debugging
@@ -341,6 +466,23 @@ function injectCostBadges(detectedResources) {
  * Scan the entire page for cloud resource identifiers and inject badges
  */
 function scanAndInjectBadges(pricingData) {
+  // DEBUG: Log current URL and body text length before scanning
+    setTimeout(() => {
+    console.log(
+      '[CostGuard] Delayed Check:',
+      document.body.innerText.includes('t3.micro')
+    );
+  }, 10000);
+
+  console.log(
+    '[CostGuard] Current Body Length:',
+    document.body.innerText.length
+  );
+
+  console.log(
+    '[CostGuard] Has t3.micro:',
+    document.body.innerText.includes('t3.micro')
+  );
   if (!pricingData) {
     console.warn('[CostGuard] No pricing data available for scanning');
     return 0;
@@ -354,6 +496,21 @@ function scanAndInjectBadges(pricingData) {
   lastScanTime = now;
 
   try {
+    // DEBUG: Log current URL and body text length
+      console.log(
+    '[CostGuard] Current URL:',
+    window.location.href
+  );
+
+  console.log(
+    '[CostGuard] Body text length:',
+    document.body.innerText.length
+  );
+
+  console.log(
+    '[CostGuard] First 500 chars:',
+    document.body.innerText.substring(0, 500)
+  );
     const detectedResources = findResourcesInElement(document.body, pricingData);
     console.log(
     '[CostGuard] Detected Resources:',
