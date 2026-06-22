@@ -406,13 +406,17 @@ function createCostGuardPanel() {
   makePanelDraggable(panel, header);
   // Also make the whole panel draggable (useful when minimized). makePanelDraggable is idempotent per handle.
   makePanelDraggable(panel, panel);
-  minimizedIcon.addEventListener('click', toggleCostGuardPanel);
+  minimizedIcon.addEventListener('click', (event) => {
+    console.log('[CostGuard] Minimized icon clicked');
+    toggleCostGuardPanel();
+  });
   costGuardPanel = panel;
   return panel;
 }
 
 function showCostGuardPanel() {
   const panel = createCostGuardPanel();
+  const header = panel.querySelector('.costguard-panel-header');
   const fullPanel = panel.querySelector('.costguard-panel-full');
   const minimizedIcon = panel.querySelector('.costguard-panel-minimized');
 
@@ -424,16 +428,18 @@ function showCostGuardPanel() {
   panel.style.right = '20px';
   panel.style.left = 'auto';
   panel.style.top = '20px';
+  panel.style.display = 'block';
 
+  header.style.display = 'flex';
   fullPanel.style.display = 'block';
   minimizedIcon.style.display = 'none';
-  panel.style.display = 'block';
   isCostGuardPanelMinimized = false;
   startAutoHideTimer();
 }
 
 function minimizeCostGuardPanel() {
   const panel = createCostGuardPanel();
+  const header = panel.querySelector('.costguard-panel-header');
   const fullPanel = panel.querySelector('.costguard-panel-full');
   const minimizedIcon = panel.querySelector('.costguard-panel-minimized');
 
@@ -445,11 +451,16 @@ function minimizeCostGuardPanel() {
   panel.style.right = '20px';
   panel.style.left = 'auto';
   panel.style.top = '20px';
+  panel.style.display = 'flex';
+  panel.style.alignItems = 'center';
+  panel.style.justifyContent = 'center';
 
+  header.style.display = 'none';
   fullPanel.style.display = 'none';
   minimizedIcon.style.display = 'flex';
   minimizedIcon.style.cursor = 'pointer';
-  panel.style.display = 'flex';
+  minimizedIcon.style.width = '100%';
+  minimizedIcon.style.height = '100%';
   isCostGuardPanelMinimized = true;
 }
 
@@ -519,6 +530,8 @@ function makePanelDraggable(panel, handle) {
   let startY = 0;
   let startLeft = 0;
   let startTop = 0;
+  let dragDistance = 0;
+  const DRAG_THRESHOLD = 5;
 
   const normalizePosition = (x, y) => {
     const maxX = window.innerWidth - panel.offsetWidth - 10;
@@ -532,6 +545,7 @@ function makePanelDraggable(panel, handle) {
   handle.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
     isDragging = true;
+    dragDistance = 0;
     startX = event.clientX;
     startY = event.clientY;
     const rect = panel.getBoundingClientRect();
@@ -541,21 +555,37 @@ function makePanelDraggable(panel, handle) {
     panel.style.left = `${startLeft}px`;
     panel.style.top = `${startTop}px`;
     panel.setPointerCapture(event.pointerId);
+    console.log('[CostGuard] Pointer down on panel');
   });
 
   handle.addEventListener('pointermove', (event) => {
     if (!isDragging) return;
     const deltaX = event.clientX - startX;
     const deltaY = event.clientY - startY;
-    const position = normalizePosition(startLeft + deltaX, startTop + deltaY);
-    panel.style.left = position.left;
-    panel.style.top = position.top;
+    dragDistance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    if (dragDistance >= DRAG_THRESHOLD) {
+      console.log('[CostGuard] Drag started (distance: ' + dragDistance + 'px)');
+      const position = normalizePosition(startLeft + deltaX, startTop + deltaY);
+      panel.style.left = position.left;
+      panel.style.top = position.top;
+    }
   });
 
   handle.addEventListener('pointerup', (event) => {
     if (!isDragging) return;
     isDragging = false;
     panel.releasePointerCapture(event.pointerId);
+    
+    if (dragDistance < DRAG_THRESHOLD) {
+      const minimizedIcon = panel.querySelector('.costguard-panel-minimized');
+      if (minimizedIcon && minimizedIcon.style.display !== 'none') {
+        console.log('[CostGuard] Bubble clicked (distance: ' + dragDistance + 'px)');
+        console.log('[CostGuard] Expanding panel');
+        showCostGuardPanel();
+      }
+    } else {
+      console.log('[CostGuard] Drag ended (distance: ' + dragDistance + 'px)');
+    }
   });
 
   handle.addEventListener('pointercancel', () => {
